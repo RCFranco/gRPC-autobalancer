@@ -4,7 +4,7 @@ import calculator_pb2_grpc
 import argparse
 
 def run(host, operation):
-    channel = grpc.insecure_channel(f'{host}:50051')
+    channel = grpc.insecure_channel(f'{host}:50051', options=[('grpc.enable_https_proxy', 0)])
     stub = calculator_pb2_grpc.CalculatorStub(channel)
     response = stub.Calculate(calculator_pb2.CalculationRequest(operation=operation))
     print(f"Result: {response.result}")
