@@ -5,7 +5,6 @@ Este projeto implementa um serviço de cálculo distribuído escalável na AWS, 
 - AWS CLI configurado
 - Conta AWS com permissões adequadas
 - Python 3.7+
-- Docker (para builds alternativos)
 - git
 
 ## Estrutura do Projeto
