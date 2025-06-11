@@ -118,6 +118,7 @@ Resources:
     Properties:
       LaunchTemplateName: 'grpc-server-template'
       LaunchTemplateData:
+        ImageId: ami-0c55b159cbfafe1f0
         InstanceType: !Ref InstanceType
         KeyName: !Ref KeyName
         SecurityGroupIds:
