@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Infraestrutura para sistema gRPC com auto scaling'
+
+Parameters:
+  InstanceType:
+    Description: 'Tipo de instância EC2'
+    Type: String
+    Default: 't3.medium'
+  
+  KeyName:
+    Description: 'Nome do par de chaves SSH'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: 'Deve ser o nome de um par de chaves EC2 existente'
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.2.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for ALB'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: 50051
+          ToPort: 50051
+          CidrIp: '0.0.0.0/0'
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for EC2 instances'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 50051
+          ToPort: 50051
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Type: application
+
+  GRPCTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 50051
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: '50051'
+      HealthCheckPath: '/'
+      TargetType: instance
+
+  GRPCListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref GRPCTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 50051
+      Protocol: HTTP
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: 'grpc-server-template'
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData: 
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            apt-get update
+            apt-get install -y python3-pip
+            pip3 install grpcio
+            cat > /server.py << 'EOL'
+            import grpc
+            from concurrent import futures
+            import calculator_pb2
+            import calculator_pb2_grpc
+
+            class Calculator(calculator_pb2_grpc.CalculatorServicer):
+                def Calculate(self, request, context):
+                    try:
+                        op, a, b = request.operation.split()
+                        a, b = float(a), float(b)
+                        if op == 'add': result = a + b
+                        elif op == 'sub': result = a - b
+                        elif op == 'mul': result = a * b
+                        elif op == 'div': result = a / b if b != 0 else float('nan')
+                        return calculator_pb2.CalculationResponse(result=result)
+                    except:
+                        context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                        return calculator_pb2.CalculationResponse()
+
+            server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+            calculator_pb2_grpc.add_CalculatorServicer_to_server(Calculator(), server)
+            server.add_insecure_port('[::]:50051')
+            server.start()
+            server.wait_for_termination()
+            EOL
+            python3 /server.py &
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateName: 'grpc-server-template'
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: 2
+      MaxSize: 5
+      DesiredCapacity: 2
+      TargetGroupARNs:
+        - !Ref GRPCTargetGroup
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  ScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 60.0
+
+Outputs:
+  ALBDNS:
+    Description: 'DNS do Application Load Balancer'
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
