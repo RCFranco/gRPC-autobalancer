@@ -1,6 +1,11 @@
 # Sistema Distribuído com Auto Scaling e gRPC
 Este projeto implementa um serviço de cálculo distribuído escalável na AWS, usando CloudFormation para infraestrutura e gRPC para comunicação entre serviços.
 
+## Membros
+- Rodrigo Franco
+- Fabio Monteiro
+- Enzo Martins
+
 ## Pré-requisitos
 - AWS CLI configurado
 - Conta AWS com permissões adequadas
