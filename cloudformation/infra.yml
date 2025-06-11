@@ -11,6 +11,7 @@ Parameters:
     Description: 'Nome do par de chaves SSH'
     Type: 'AWS::EC2::KeyPair::KeyName'
     ConstraintDescription: 'Deve ser o nome de um par de chaves EC2 existente'
+    Default: 'vockey'
 
 Resources:
   VPC:
